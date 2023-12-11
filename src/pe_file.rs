@@ -1,6 +1,9 @@
 use super::ReadHelper;
 use std::io::{Read, SeekFrom, Seek};
-struct RVA(u64);
+#[derive(Debug,Clone, Copy)]
+pub struct RVA(pub u64);
+#[derive(Debug,Clone, Copy)]
+pub struct VA(u64);
 #[derive(Debug)]
 struct PESection{
     section_type:SectionType,
@@ -12,11 +15,13 @@ impl PESection{
     fn from_file(file:&mut (impl Read + Seek),section_header:&SectionHeader,header_end:u64)-> Result<Self, PEFileReadError>{
         let section_type = section_header.section_type;
         let mut data = vec![0;section_header.virtual_size as usize];
-        file.seek(SeekFrom::Start(header_end + section_header.offset_of_raw_data as u64))?;
+        //println!("section_header.offset_of_raw_data:{}",section_header.offset_of_raw_data);
+        file.seek(SeekFrom::Start(section_header.offset_of_raw_data as u64))?;
         file.read_exact(&mut data)?;
         Ok(Self{ section_type, virtual_adress:section_header.virtual_adress, characteristics:section_header.characteristics, data })
     }
     fn slice_at_rva(&self,rva:RVA,length:u64)->Option<&[u8]>{
+        println!("Trying to get slice of length {length} starting at {rva:?}. self.virtual_adress is {virtual_adress}. length:{length}",virtual_adress = self.virtual_adress,length = self.data.len());
         let start = self.virtual_adress as u64;
         let end = self.virtual_adress as u64 + self.data.len() as u64;
         if start <= rva.0 && (rva.0 + length) < end{
@@ -76,7 +81,7 @@ struct PEFileHeader {
     characteristics: u16,
 }
 #[derive(Debug)]
-struct PEHeader {
+pub struct PEHeader {
     file_header: PEFileHeader,
     code_size: u32,
     init_data_size: u32,
@@ -88,7 +93,7 @@ struct PEHeader {
     sections:Vec<SectionHeader>,
 }
 #[derive(Debug)]
-struct NTHeader {
+pub struct NTHeader {
     image_base: u32,
     section_algiement: u32,
     file_aligement: u32,
@@ -98,7 +103,8 @@ struct NTHeader {
     user_minor: u16,
     subsys_major: u16,
     subsys_minor: u16,
-    cil_header:u64,
+    cil_header:u32,
+    cil_header_size:u32,
 }
 impl TryFrom<&str> for SectionType{
     type Error = PEFileReadError;
@@ -119,9 +125,13 @@ impl SectionHeader{
         let name = std::str::from_utf8(&name[..null]).expect("Not utf8 section name!");
         let section_type = SectionType::try_from(name)?;
         let virtual_size = file.read_u32()?;
+        println!("virtual_size:{virtual_size}");
         let virtual_adress = file.read_u32()?;
+        println!("virtual_adress:{virtual_adress}");
         let size_of_raw_data = file.read_u32()?;
+        println!("size_of_raw_data:{size_of_raw_data}");
         let offset_of_raw_data = file.read_u32()?;
+        println!("offset_of_raw_data:{offset_of_raw_data}");
         let reallcations = file.read_u32()?;
         assert_eq!(reallcations,0);
         let line_numbers = file.read_u32()?;
@@ -135,6 +145,12 @@ impl SectionHeader{
     }
 }
 impl NTHeader {
+    pub fn cil_header(&self)->RVA{
+        RVA(self.cil_header as u64)
+    }
+    pub fn cil_header_size(&self)->u32{
+        self.cil_header_size
+    }
     fn from_file(file: &mut impl Read) -> Result<Self, PEFileReadError> {
         let image_base = file.read_u32()?;
         let section_algiement = file.read_u32()?;
@@ -212,14 +228,20 @@ impl NTHeader {
         let _tls_table = file.read_u64()?;
         let _load_config_table = file.read_u64()?;
         let _bound_import = file.read_u64()?;
-        let _iat = file.read_u64()?;
-        let _delay_import_descr = file.read_u64()?;
-        let cil_header = file.read_u64()?;
-        let _reserved = file.read_u64()?;
-        Ok(Self{ image_base, section_algiement, file_aligement, os_major, os_minor, user_major, user_minor, subsys_major, subsys_minor, cil_header })
+        let _iat: u64 = file.read_u64()?;
+        let delay_import_descr = file.read_u64()?;
+        assert_eq!(delay_import_descr,0);
+        let cil_header = file.read_u32()?;
+        let cil_header_size = file.read_u32()?;
+        let reserved = file.read_u64()?;
+        assert_eq!(reserved,0);
+        Ok(Self{ image_base, section_algiement, file_aligement, os_major, os_minor, user_major, user_minor, subsys_major, subsys_minor, cil_header,cil_header_size })
     }
 }
 impl PEHeader {
+    pub fn nt_header(&self)->&NTHeader{
+        &self.nt_header
+    }
     fn from_file(file: &mut (impl Read + Seek)) -> Result<(Self,u64), PEFileReadError> {
         let file_header = PEFileHeader::from_file(file)?;
         let magic = file.read_u16()?;
@@ -243,7 +265,7 @@ impl PEHeader {
         let nt_header = NTHeader::from_file(file)?;
         let header_end = file.stream_position()?;
         let mut sections = Vec::with_capacity(file_header.section_count as usize);
-        for _ in 0..file_header.section_count{
+        for _ in 0..(file_header.section_count){
             sections.push(SectionHeader::from_file(file)?);
         }
         Ok((Self {
@@ -284,6 +306,18 @@ impl PEFileHeader {
     }
 }
 impl PEFile {
+    pub fn slice_at_rva(&self,rva:RVA,length:u64)->Option<&[u8]>{
+        for section in &self.sections{
+            let slice = section.slice_at_rva(rva,length);
+            if slice.is_some(){
+                return slice;
+            }
+        }
+        None
+    }
+    pub fn pe_header(&self)->&PEHeader{
+        &self.header
+    }
     pub fn from_file(file: &mut (impl Read + Seek)) -> Result<Self, PEFileReadError> {
         let mut file_stub = [0; MSDOS_STUB_FIRST.len()];
         // Read first part of the DOS stub

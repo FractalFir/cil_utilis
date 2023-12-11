@@ -4,7 +4,10 @@ use std::{
 };
 
 
+
+
 pub(crate) mod pe_file;
+pub(crate) mod assembly;
 fn build_ilasm(path: impl AsRef<Path>, is_dll: bool) -> PathBuf {
     let path = path.as_ref();
     let asm_type = if is_dll { "-dll" } else { "-exe" };
@@ -34,12 +37,12 @@ pub fn add(left: usize, right: usize) -> usize {
     left + right
 }
 #[cfg(test)]
-use {std::fs::File,pe_file::PEFile};
+use {std::fs::File, assembly::EncodedAssembly};
 #[test]
 fn deser_add_i32() {
     build_ilasm("test/add_i32.il", true);
-    let mut pe_file = File::open("test/add_i32.dll").unwrap();
-    let pe_file = PEFile::from_file(&mut pe_file).unwrap();
+    let mut file = File::open("test/add_i32.dll").unwrap();
+    let asm = EncodedAssembly::from_file(&mut file).unwrap();
 }
 trait ReadHelper {
     fn read_u8(self) -> std::io::Result<u8>;
