@@ -2,12 +2,14 @@ use std::{
     io::Read,
     path::{Path, PathBuf},
 };
-
-
-
-
-pub(crate) mod pe_file;
 pub(crate) mod assembly;
+pub(crate) mod bitvec;
+pub(crate) mod field;
+pub(crate) mod method;
+pub(crate) mod param;
+pub(crate) mod pe_file;
+pub(crate) mod table;
+pub(crate) mod type_def;
 fn build_ilasm(path: impl AsRef<Path>, is_dll: bool) -> PathBuf {
     let path = path.as_ref();
     let asm_type = if is_dll { "-dll" } else { "-exe" };
@@ -37,12 +39,13 @@ pub fn add(left: usize, right: usize) -> usize {
     left + right
 }
 #[cfg(test)]
-use {std::fs::File, assembly::EncodedAssembly};
+use {assembly::EncodedAssembly, std::fs::File,table::DecodedTable};
 #[test]
 fn deser_add_i32() {
     build_ilasm("test/add_i32.il", true);
     let mut file = File::open("test/add_i32.dll").unwrap();
     let asm = EncodedAssembly::from_file(&mut file).unwrap();
+    let tables:Vec<_> = asm.table_stream().iter().map(|table|DecodedTable::decode(table,&asm)).collect();
 }
 trait ReadHelper {
     fn read_u8(self) -> std::io::Result<u8>;

@@ -1,74 +1,81 @@
 use super::ReadHelper;
-use std::io::{Read, SeekFrom, Seek};
-#[derive(Debug,Clone, Copy)]
+use std::io::{Read, Seek, SeekFrom, Write};
+#[derive(Debug, Clone, Copy)]
 pub struct RVA(pub u64);
-#[derive(Debug,Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub struct VA(u64);
 #[derive(Debug)]
-struct PESection{
-    section_type:SectionType,
-    virtual_adress:u32,
-    characteristics:u32,
-    data:Vec<u8>
+struct PESection {
+    section_type: SectionType,
+    virtual_adress: u32,
+    characteristics: u32,
+    data: Vec<u8>,
 }
-impl PESection{
-    fn from_file(file:&mut (impl Read + Seek),section_header:&SectionHeader,header_end:u64)-> Result<Self, PEFileReadError>{
+impl PESection {
+    fn from_file(
+        file: &mut (impl Read + Seek),
+        section_header: &SectionHeader,
+        header_end: u64,
+    ) -> Result<Self, PEFileReadError> {
         let section_type = section_header.section_type;
-        let mut data = vec![0;section_header.virtual_size as usize];
+        let mut data = vec![0; section_header.virtual_size as usize];
         //println!("section_header.offset_of_raw_data:{}",section_header.offset_of_raw_data);
         file.seek(SeekFrom::Start(section_header.offset_of_raw_data as u64))?;
         file.read_exact(&mut data)?;
-        Ok(Self{ section_type, virtual_adress:section_header.virtual_adress, characteristics:section_header.characteristics, data })
+        Ok(Self {
+            section_type,
+            virtual_adress: section_header.virtual_adress,
+            characteristics: section_header.characteristics,
+            data,
+        })
     }
-    fn slice_at_rva(&self,rva:RVA,length:u64)->Option<&[u8]>{
+    fn slice_at_rva(&self, rva: RVA, length: u64) -> Option<&[u8]> {
         println!("Trying to get slice of length {length} starting at {rva:?}. self.virtual_adress is {virtual_adress}. length:{length}",virtual_adress = self.virtual_adress,length = self.data.len());
         let start = self.virtual_adress as u64;
         let end = self.virtual_adress as u64 + self.data.len() as u64;
-        if start <= rva.0 && (rva.0 + length) < end{
+        if start <= rva.0 && (rva.0 + length) < end {
             let data_start = rva.0 - self.virtual_adress as u64;
             let data_end = data_start + length;
-            Some(&self.data[data_start as usize .. data_end as usize])
-        }
-        else{
+            Some(&self.data[data_start as usize..data_end as usize])
+        } else {
             None
         }
-        
     }
 }
-#[derive(Debug,Clone, Copy)]
-enum SectionType{
+#[derive(Debug, Clone, Copy)]
+enum SectionType {
     Text,
     Reloc,
 }
 #[derive(Debug)]
-struct SectionHeader{
-    section_type:SectionType,
-    virtual_size:u32,
-    virtual_adress:u32,
-    size_of_raw_data:u32,
-    offset_of_raw_data:u32,
-    characteristics:u32,
+struct SectionHeader {
+    section_type: SectionType,
+    virtual_size: u32,
+    virtual_adress: u32,
+    size_of_raw_data: u32,
+    offset_of_raw_data: u32,
+    characteristics: u32,
 }
-enum Subsystem{
+enum Subsystem {
     //None,
     CUI,
     GUI,
 }
-impl TryFrom<u16> for Subsystem{
+impl TryFrom<u16> for Subsystem {
     type Error = PEFileReadError;
     fn try_from(value: u16) -> Result<Self, Self::Error> {
-        match value{
+        match value {
             //0=>Ok(Subsystem::None),
-            2=>Ok(Subsystem::CUI),
-            3=>Ok(Subsystem::GUI),
-            _=>Err(PEFileReadError::WrongSubsystem(value)),
+            2 => Ok(Subsystem::CUI),
+            3 => Ok(Subsystem::GUI),
+            _ => Err(PEFileReadError::WrongSubsystem(value)),
         }
     }
-} 
+}
 #[derive(Debug)]
 pub struct PEFile {
-    header:PEHeader,
-    sections:Vec<PESection>,
+    header: PEHeader,
+    sections: Vec<PESection>,
 }
 #[derive(Debug)]
 struct PEFileHeader {
@@ -89,8 +96,8 @@ pub struct PEHeader {
     entrypoint_rva: u32,
     code_rva: u32,
     data_rva: u32,
-    nt_header:NTHeader,
-    sections:Vec<SectionHeader>,
+    nt_header: NTHeader,
+    sections: Vec<SectionHeader>,
 }
 #[derive(Debug)]
 pub struct NTHeader {
@@ -103,23 +110,23 @@ pub struct NTHeader {
     user_minor: u16,
     subsys_major: u16,
     subsys_minor: u16,
-    cil_header:u32,
-    cil_header_size:u32,
+    cil_header: u32,
+    cil_header_size: u32,
 }
-impl TryFrom<&str> for SectionType{
+impl TryFrom<&str> for SectionType {
     type Error = PEFileReadError;
 
     fn try_from(value: &str) -> Result<Self, Self::Error> {
-        match value{
-            ".text"=>Ok(Self::Text),
-            ".reloc"=>Ok(Self::Reloc),
-            _=>Err(PEFileReadError::UnknownSectionName(value.into())),
+        match value {
+            ".text" => Ok(Self::Text),
+            ".reloc" => Ok(Self::Reloc),
+            _ => Err(PEFileReadError::UnknownSectionName(value.into())),
         }
     }
 }
-impl SectionHeader{
-    fn from_file(file:&mut impl Read) -> Result<Self, PEFileReadError>{
-        let mut name = [0;8];
+impl SectionHeader {
+    fn from_file(file: &mut impl Read) -> Result<Self, PEFileReadError> {
+        let mut name = [0; 8];
         file.read_exact(&mut name)?;
         let null = name.iter().position(|c| *c == 0).unwrap_or(8);
         let name = std::str::from_utf8(&name[..null]).expect("Not utf8 section name!");
@@ -133,92 +140,99 @@ impl SectionHeader{
         let offset_of_raw_data = file.read_u32()?;
         println!("offset_of_raw_data:{offset_of_raw_data}");
         let reallcations = file.read_u32()?;
-        assert_eq!(reallcations,0);
+        assert_eq!(reallcations, 0);
         let line_numbers = file.read_u32()?;
-        assert_eq!(line_numbers,0);
+        assert_eq!(line_numbers, 0);
         let reallcation_count = file.read_u16()?;
-        assert_eq!(reallcation_count,0);
+        assert_eq!(reallcation_count, 0);
         let line_number_count = file.read_u16()?;
-        assert_eq!(line_number_count,0);
+        assert_eq!(line_number_count, 0);
         let characteristics = file.read_u32()?;
-        Ok(Self{ section_type, virtual_size, virtual_adress, size_of_raw_data, offset_of_raw_data, characteristics })
+        Ok(Self {
+            section_type,
+            virtual_size,
+            virtual_adress,
+            size_of_raw_data,
+            offset_of_raw_data,
+            characteristics,
+        })
     }
 }
 impl NTHeader {
-    pub fn cil_header(&self)->RVA{
+    pub fn cil_header(&self) -> RVA {
         RVA(self.cil_header as u64)
     }
-    pub fn cil_header_size(&self)->u32{
+    pub fn cil_header_size(&self) -> u32 {
         self.cil_header_size
     }
     fn from_file(file: &mut impl Read) -> Result<Self, PEFileReadError> {
         let image_base = file.read_u32()?;
         let section_algiement = file.read_u32()?;
         let file_aligement = file.read_u32()?;
-        if file_aligement != 512{
+        if file_aligement != 512 {
             return Err(PEFileReadError::WrongFileAligement);
         }
         println!("file_aligement:{file_aligement}");
         let os_major = file.read_u16()?;
-        
+
         let os_minor = file.read_u16()?;
-        
+
         let user_major = file.read_u16()?;
         let user_minor = file.read_u16()?;
         let subsys_major = file.read_u16()?;
         println!("subsys_major:{subsys_major}");
         let subsys_minor = file.read_u16()?;
         let reserved = file.read_u32()?;
-        if reserved != 0{
+        if reserved != 0 {
             return Err(PEFileReadError::WrongMagic);
         }
         let _image_size = file.read_u32()?;
-        let _header_size  = file.read_u32()?;
-        let checksum =  file.read_u32()?;
-        if checksum != 0{
+        let _header_size = file.read_u32()?;
+        let checksum = file.read_u32()?;
+        if checksum != 0 {
             return Err(PEFileReadError::WrongChecksum);
         }
-        let _subsystem =  Subsystem::try_from(file.read_u16()?)?;
-        let _dll_flags =  file.read_u16()?;
+        let _subsystem = Subsystem::try_from(file.read_u16()?)?;
+        let _dll_flags = file.read_u16()?;
         let stack_reserve_size = file.read_u32()?;
-        if stack_reserve_size != 0x100000{
+        if stack_reserve_size != 0x100000 {
             return Err(PEFileReadError::WrongStackReserve);
         }
         let stack_commit_size = file.read_u32()?;
-        if stack_commit_size != 0x1000{
+        if stack_commit_size != 0x1000 {
             return Err(PEFileReadError::WrongStackCommit);
         }
         let heap_reserve_size = file.read_u32()?;
-        if heap_reserve_size != 0x100000{
+        if heap_reserve_size != 0x100000 {
             return Err(PEFileReadError::WrongHeapReserve);
         }
         let heap_commit_size = file.read_u32()?;
-        if heap_commit_size != 0x1000{
+        if heap_commit_size != 0x1000 {
             return Err(PEFileReadError::WrongHeapCommit);
         }
         let loader_flags = file.read_u32()?;
-        if loader_flags != 0{
+        if loader_flags != 0 {
             return Err(PEFileReadError::WrongLoaderFlags);
         }
         let data_dir_count = file.read_u32()?;
-        if data_dir_count != 0x10{
+        if data_dir_count != 0x10 {
             return Err(PEFileReadError::WrongDirectoryCount);
         }
         let export_table = file.read_u64()?;
-        if export_table != 0{
+        if export_table != 0 {
             return Err(PEFileReadError::ExportTablePresent);
         }
         let _import_table = file.read_u64()?;
         let resource_table = file.read_u64()?;
-        if resource_table != 0{
+        if resource_table != 0 {
             return Err(PEFileReadError::ResourceTablePresent);
         }
         let exception_table = file.read_u64()?;
-        if exception_table != 0{
+        if exception_table != 0 {
             return Err(PEFileReadError::ExceptionTablePresent);
         }
         let certificate_table = file.read_u64()?;
-        if certificate_table != 0{
+        if certificate_table != 0 {
             return Err(PEFileReadError::CertificateTablePresent);
         }
         let _base_reallocation_table = file.read_u64()?;
@@ -230,19 +244,34 @@ impl NTHeader {
         let _bound_import = file.read_u64()?;
         let _iat: u64 = file.read_u64()?;
         let delay_import_descr = file.read_u64()?;
-        assert_eq!(delay_import_descr,0);
+        assert_eq!(delay_import_descr, 0);
         let cil_header = file.read_u32()?;
         let cil_header_size = file.read_u32()?;
         let reserved = file.read_u64()?;
-        assert_eq!(reserved,0);
-        Ok(Self{ image_base, section_algiement, file_aligement, os_major, os_minor, user_major, user_minor, subsys_major, subsys_minor, cil_header,cil_header_size })
+        assert_eq!(reserved, 0);
+        Ok(Self {
+            image_base,
+            section_algiement,
+            file_aligement,
+            os_major,
+            os_minor,
+            user_major,
+            user_minor,
+            subsys_major,
+            subsys_minor,
+            cil_header,
+            cil_header_size,
+        })
+    }
+    fn serialize(&self, out: &mut (impl Write + Seek)) -> std::io::Result<()> {
+        todo!()
     }
 }
 impl PEHeader {
-    pub fn nt_header(&self)->&NTHeader{
+    pub fn nt_header(&self) -> &NTHeader {
         &self.nt_header
     }
-    fn from_file(file: &mut (impl Read + Seek)) -> Result<(Self,u64), PEFileReadError> {
+    fn from_file(file: &mut (impl Read + Seek)) -> Result<(Self, u64), PEFileReadError> {
         let file_header = PEFileHeader::from_file(file)?;
         let magic = file.read_u16()?;
         if magic != 0x10B {
@@ -265,20 +294,23 @@ impl PEHeader {
         let nt_header = NTHeader::from_file(file)?;
         let header_end = file.stream_position()?;
         let mut sections = Vec::with_capacity(file_header.section_count as usize);
-        for _ in 0..(file_header.section_count){
+        for _ in 0..(file_header.section_count) {
             sections.push(SectionHeader::from_file(file)?);
         }
-        Ok((Self {
-            file_header,
-            code_size,
-            init_data_size,
-            uninit_data_size,
-            entrypoint_rva,
-            code_rva,
-            data_rva,
-            nt_header,
-            sections,
-        },header_end))
+        Ok((
+            Self {
+                file_header,
+                code_size,
+                init_data_size,
+                uninit_data_size,
+                entrypoint_rva,
+                code_rva,
+                data_rva,
+                nt_header,
+                sections,
+            },
+            header_end,
+        ))
     }
 }
 impl PEFileHeader {
@@ -289,7 +321,7 @@ impl PEFileHeader {
         let symbol_table_offset = file.read_u32()?;
         let symbol_table_size = file.read_u32()?;
         let optional_header_size = file.read_u16()?;
-        if optional_header_size != 224{
+        if optional_header_size != 224 {
             todo!("Can't yet handle PE files with headers with size that differes form 224.");
         }
         println!("optional_header_size:{optional_header_size}");
@@ -306,16 +338,16 @@ impl PEFileHeader {
     }
 }
 impl PEFile {
-    pub fn slice_at_rva(&self,rva:RVA,length:u64)->Option<&[u8]>{
-        for section in &self.sections{
-            let slice = section.slice_at_rva(rva,length);
-            if slice.is_some(){
+    pub fn slice_at_rva(&self, rva: RVA, length: u64) -> Option<&[u8]> {
+        for section in &self.sections {
+            let slice = section.slice_at_rva(rva, length);
+            if slice.is_some() {
                 return slice;
             }
         }
         None
     }
-    pub fn pe_header(&self)->&PEHeader{
+    pub fn pe_header(&self) -> &PEHeader {
         &self.header
     }
     pub fn from_file(file: &mut (impl Read + Seek)) -> Result<Self, PEFileReadError> {
@@ -341,10 +373,13 @@ impl PEFile {
         if pe != 0x00004550 {
             return Err(PEFileReadError::NotPEFile);
         }
-        let (header,header_end) = PEHeader::from_file(file)?;
-        let sections = header.sections.iter().map(|section_header|PESection::from_file(file, section_header, header_end)).collect::<Result<_,_>>()?;
-        Ok(Self{ header, sections })
-
+        let (header, header_end) = PEHeader::from_file(file)?;
+        let sections = header
+            .sections
+            .iter()
+            .map(|section_header| PESection::from_file(file, section_header, header_end))
+            .collect::<Result<_, _>>()?;
+        Ok(Self { header, sections })
     }
 }
 #[derive(Debug)]
