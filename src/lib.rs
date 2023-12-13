@@ -2,6 +2,8 @@ use std::{
     io::Read,
     path::{Path, PathBuf},
 };
+
+use assembly::BlobIndex;
 pub(crate) mod assembly;
 pub(crate) mod bitvec;
 pub(crate) mod field;
@@ -75,3 +77,4 @@ impl<R: Read> ReadHelper for R {
         Ok(u64::from_le_bytes(tmp))
     }
 }
+

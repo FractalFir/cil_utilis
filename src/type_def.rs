@@ -27,6 +27,9 @@ impl TypeDef {
     pub(crate) fn name(&self)->StringIndex{
         self.name
     }
+    pub(crate) fn method_index(&self)->MethodIndex{
+        self.method_index
+    }
     pub(crate) fn namespace(&self)->StringIndex{
         self.namespace
     }
