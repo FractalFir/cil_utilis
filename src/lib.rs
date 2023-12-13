@@ -11,6 +11,7 @@ pub(crate) mod method;
 pub(crate) mod param;
 pub(crate) mod pe_file;
 pub(crate) mod table;
+pub(crate) mod r#type;
 pub(crate) mod type_def;
 fn build_ilasm(path: impl AsRef<Path>, is_dll: bool) -> PathBuf {
     let path = path.as_ref();
@@ -41,13 +42,29 @@ pub fn add(left: usize, right: usize) -> usize {
     left + right
 }
 #[cfg(test)]
-use {assembly::EncodedAssembly, std::fs::File,table::DecodedTable};
+use {assembly::EncodedAssembly, std::fs::File, table::DecodedTable};
 #[test]
 fn deser_add_i32() {
     build_ilasm("test/add_i32.il", true);
     let mut file = File::open("test/add_i32.dll").unwrap();
     let asm = EncodedAssembly::from_file(&mut file).unwrap();
-    let tables:Vec<_> = asm.table_stream().iter().map(|table|DecodedTable::decode(table,&asm)).collect();
+    let tables: Vec<_> = asm
+        .table_stream()
+        .iter()
+        .map(|table| DecodedTable::decode(table, &asm))
+        .collect();
+}
+#[test]
+fn deser_add_i8() {
+    build_ilasm("test/add_i8.il", true);
+    let mut file = File::open("test/add_i8.dll").unwrap();
+    let asm = EncodedAssembly::from_file(&mut file).unwrap();
+    let tables: Vec<_> = asm
+        .table_stream()
+        .iter()
+        .map(|table| DecodedTable::decode(table, &asm))
+        .collect();
+    //panic!();
 }
 trait ReadHelper {
     fn read_u8(self) -> std::io::Result<u8>;
@@ -77,4 +94,3 @@ impl<R: Read> ReadHelper for R {
         Ok(u64::from_le_bytes(tmp))
     }
 }
-

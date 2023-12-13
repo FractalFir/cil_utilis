@@ -3,8 +3,8 @@ use std::io::{Read, Seek};
 use crate::{
     bitvec::BitVec64,
     field::FieldIndex,
-    method::{MethodIndex, MethodDef},
-    param::ParamIndex,
+    method::{MethodDef, MethodIndex},
+    param::{Param, ParamIndex},
     pe_file::{PEFile, PEFileReadError, RVA},
     type_def::{TypeDef, TypeDefOrRef},
 };
@@ -65,7 +65,7 @@ impl HeapSizes {
 }
 #[derive(Debug)]
 enum MetadataStream {
-    LogicalMetadataTable(Box<[Table]>),
+    LogicalMetadataTable(Box<[u32]>,BitVec64,Box<[Table]>),
     Strings(Box<[u8]>),
     US(Box<[u8]>),
     Blob(Box<[u8]>),
@@ -82,7 +82,7 @@ pub(crate) enum Table {
     Module { name: StringIndex, mvid: GUIDIndex },
     TypeDefTable(Box<[TypeDef]>),
     MethodDefTable(Box<[MethodDef]>),
-    Param,
+    Param(Vec<Param>),
 }
 pub(crate) fn table_rows(tables_rows: &[u32], tables: BitVec64, table: u8) -> Option<u32> {
     match tables.into_iter().position(|v| v == table) {
@@ -182,9 +182,8 @@ impl Table {
                 }
                 for _ in 0..rows {
                     signatures.push(sizes.read_blob_index(table_slice));
-                    println!("sig:{:?}",signatures.last().unwrap());
+                    println!("sig:{:?}", signatures.last().unwrap());
                     *table_slice = &table_slice[sizes.blob_index_size()..];
-                    
                 }
                 for _ in 0..rows {
                     param_indices.push(ParamIndex::decode(table_slice, tables_rows, tables));
@@ -199,7 +198,7 @@ impl Table {
                 );
                 Self::MethodDefTable(method_defs.into())
             }
-            0x8=>{
+            0x8 => {
                 let mut flags = Vec::with_capacity(rows as usize);
                 for _ in 0..rows {
                     flags.push(u16_from_slice_at(table_slice, 0));
@@ -215,9 +214,7 @@ impl Table {
                     names.push(sizes.read_string_index(table_slice));
                     *table_slice = &table_slice[sizes.string_index_size()..];
                 }
-                //todo!("ParamTable{{flags:{flags:?},sequences:{sequences:?},names:{names:?}}}");
-                println!("table_slice.len():{}",table_slice.len());
-                Self::Param
+                Self::Param(Param::new(&flags, &sequences, &names))
             }
             _ => todo!("Unknown table 0x{table:x}",),
         }
@@ -265,7 +262,7 @@ impl MetadataStream {
                 tables,
             ));
         }
-        Self::LogicalMetadataTable(encoded_tables.into())
+        Self::LogicalMetadataTable(rows.into(),tables,encoded_tables.into())
     }
     fn string_stream(stream: &[u8]) -> Self {
         Self::Strings(stream.to_owned().into())
@@ -274,7 +271,7 @@ impl MetadataStream {
         Self::US(stream.to_owned().into())
     }
     fn blob_stream(stream: &[u8]) -> Self {
-        println!("blob len:{}",stream.len());
+        println!("blob len:{}", stream.len());
         Self::Blob(stream.to_owned().into())
     }
     fn guid_stream(stream: &[u8]) -> Self {
@@ -325,6 +322,7 @@ struct RawMetadata {
     streams: Vec<MetadataStream>,
 }
 impl RawMetadata {
+    
     fn from_slice(metadata: &[u8]) -> Self {
         let magic = u32_from_slice_at(metadata, 0);
         assert_eq!(magic, 0x424A5342);
@@ -383,6 +381,7 @@ pub fn u16_from_slice_at(slice: &[u8], offset: usize) -> u16 {
     u16::from_le_bytes(value)
 }
 impl CILHeader {
+
     fn read_from_pe(pe_file: &PEFile) -> Self {
         let cli_header_rva: RVA = pe_file.pe_header().nt_header().cil_header();
         let cil_header_size = pe_file.pe_header().nt_header().cil_header_size();
@@ -425,29 +424,50 @@ impl CILHeader {
             raw_metadata,
         }
     }
+
+    pub fn raw_metadata(&self) -> &RawMetadata {
+        &self.raw_metadata
+    }
 }
 pub struct EncodedAssembly {
     pe_file: PEFile,
     header: CILHeader,
 }
-fn get_blob(blob_heap:&[u8],pos:BlobIndex)->&[u8]{
-    let ptr:&[u8] = &blob_heap[pos.0 as usize..];
-	if ptr[0] & 0x80 == 0{
-		let size = (ptr[0] & 0x7f) as usize;
-		&ptr[1..(1+size)]
-	} else if ptr[0] & 0x40 == 0{
-		let size = ((ptr [0] & 0x3f) as usize) << 8 + ptr [1] as usize;
-        &ptr[2..(2+size)]
-	} else {
-	    let size = ((ptr [0] & 0x1f) as usize) << 24 +
-			((ptr [1] as usize) << 16) +
-			((ptr [2] as usize) << 8) +
-			ptr [3] as usize;
-        &ptr[4..(4+size)]
-	}
+pub fn get_blob(blob_heap: &[u8], pos: BlobIndex) -> &[u8] {
+    let ptr: &[u8] = &blob_heap[pos.0 as usize..];
+    if ptr[0] & 0x80 == 0 {
+        let size = (ptr[0] & 0x7f) as usize;
+        &ptr[1..(1 + size)]
+    } else if ptr[0] & 0x40 == 0 {
+        let size = ((ptr[0] & 0x3f) as usize) << 8 + ptr[1] as usize;
+        &ptr[2..(2 + size)]
+    } else {
+        let size = ((ptr[0] & 0x1f) as usize)
+            << 24 + ((ptr[1] as usize) << 16) + ((ptr[2] as usize) << 8) + ptr[3] as usize;
+        &ptr[4..(4 + size)]
+    }
+}
+pub fn decode_blob_compressed_value(blob_heap: &mut &[u8]) -> u32 {
+    if blob_heap[0] & 0x80 == 0 {
+        let value = (blob_heap[0] & 0x7f) as u32;
+        *blob_heap = &blob_heap[1..];
+        value
+    } else if blob_heap[0] & 0x40 == 0 {
+        let value = ((blob_heap[0] & 0x3f) as u32) << 8 + blob_heap[1] as u32;
+        *blob_heap = &blob_heap[2..];
+        value
+    } else {
+        let value = ((blob_heap[0] & 0x1f) as u32)
+            << 24
+                + ((blob_heap[1] as u32) << 16)
+                + ((blob_heap[2] as u32) << 8)
+                + blob_heap[3] as u32;
+        *blob_heap = &blob_heap[4..];
+        value
+    }
 }
 impl EncodedAssembly {
-    pub fn pe_file(&self)->&PEFile{
+    pub fn pe_file(&self) -> &PEFile {
         &self.pe_file
     }
     pub fn from_file(file: &mut (impl Read + Seek)) -> Result<Self, AssemblyReadError> {
@@ -455,7 +475,7 @@ impl EncodedAssembly {
         let header = CILHeader::read_from_pe(&pe_file);
         Ok(Self { pe_file, header })
     }
-    pub fn str_at(&self,string_index:StringIndex)->&str{
+    pub fn str_at(&self, string_index: StringIndex) -> &str {
         let slice = &self.string_stream()[(string_index.0 as usize)..];
         let mut null = 0;
         while slice[null] != 0 {
@@ -463,63 +483,84 @@ impl EncodedAssembly {
         }
         std::str::from_utf8(&slice[..null]).expect("Invalid asm string!")
     }
-    pub fn string_stream(&self)->&[u8]{
-        for stream in &self.header.raw_metadata.streams{
-            match stream{
-                MetadataStream::Strings(strings)=>return &strings,
-                _=>(),
-            } 
+    pub fn string_stream(&self) -> &[u8] {
+        for stream in &self.header.raw_metadata.streams {
+            match stream {
+                MetadataStream::Strings(strings) => return &strings,
+                _ => (),
+            }
         }
         panic!("No String stream!")
     }
-    pub fn guid_stream(&self)->&[u128]{
-        for stream in &self.header.raw_metadata.streams{
-            match stream{
-                MetadataStream::GUID(guid)=>return &guid,
-                _=>(),
-            } 
+    pub fn guid_stream(&self) -> &[u128] {
+        for stream in &self.header.raw_metadata.streams {
+            match stream {
+                MetadataStream::GUID(guid) => return &guid,
+                _ => (),
+            }
         }
         panic!("No GUID stream!")
     }
-    pub fn blob_stream(&self)->&[u8]{
-        for stream in &self.header.raw_metadata.streams{
-            match stream{
-                MetadataStream::Blob(blob)=>return &blob,
-                _=>(),
-            } 
+    pub fn blob_stream(&self) -> &[u8] {
+        for stream in &self.header.raw_metadata.streams {
+            match stream {
+                MetadataStream::Blob(blob) => return &blob,
+                _ => (),
+            }
         }
         panic!("No Blob stream!")
     }
-    pub fn blob_at(&self,blob_index:BlobIndex)->&[u8]{
+    pub fn blob_at(&self, blob_index: BlobIndex) -> &[u8] {
         get_blob(self.blob_stream(), blob_index)
     }
-    pub fn table_stream(&self)->&[Table]{
-        for stream in &self.header.raw_metadata.streams{
-            match stream{
-                MetadataStream::LogicalMetadataTable(tables)=>return &tables,
-                _=>(),
-            } 
+    pub fn table_stream(&self) -> &[Table] {
+        for stream in &self.header.raw_metadata.streams {
+            match stream {
+                MetadataStream::LogicalMetadataTable(_,_,tables) => return &tables,
+                _ => (),
+            }
         }
         panic!("No LogicalMetadataTable stream!")
     }
-    pub fn methods(&self)->&[MethodDef]{
-        for table in self.table_stream(){
-            match table{
-                Table::MethodDefTable(defs)=>return &defs,
-                _=>(),
-            } 
+    pub fn tables_rows(&self) -> (&[u32],BitVec64) {
+        for stream in &self.header.raw_metadata.streams {
+            match stream {
+                MetadataStream::LogicalMetadataTable(rows,tables,_) => return (&rows,*tables),
+                _ => (),
+            }
+        }
+        panic!("No LogicalMetadataTable stream!")
+    }
+    pub fn methods(&self) -> &[MethodDef] {
+        for table in self.table_stream() {
+            match table {
+                Table::MethodDefTable(defs) => return &defs,
+                _ => (),
+            }
         }
         panic!("No methods table!")
-        
     }
-    pub fn field_len(&self)->usize{
-        for table in self.table_stream(){
-            match table{
+    pub fn field_len(&self) -> usize {
+        for table in self.table_stream() {
+            match table {
                 //Table::Fields(defs)=>return &defs,
-                _=>(),
-            } 
+                _ => (),
+            }
         }
         0
+    }
+    pub fn params_len(&self) -> usize {
+        for table in self.table_stream() {
+            match table {
+                Table::Param(params) => return params.len(),
+                _ => (),
+            }
+        }
+        0
+    }
+
+    pub fn cil_header(&self) -> &CILHeader {
+        &self.header
     }
 }
 #[derive(Debug)]

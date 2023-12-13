@@ -21,22 +21,22 @@ pub(crate) struct TypeDef {
     method_index: MethodIndex,
 }
 impl TypeDef {
-    pub(crate) fn flags(&self)->u32{
+    pub(crate) fn flags(&self) -> u32 {
         self.flags
     }
-    pub(crate) fn name(&self)->StringIndex{
+    pub(crate) fn name(&self) -> StringIndex {
         self.name
     }
-    pub(crate) fn method_index(&self)->MethodIndex{
+    pub(crate) fn method_index(&self) -> MethodIndex {
         self.method_index
     }
-    pub(crate) fn namespace(&self)->StringIndex{
+    pub(crate) fn namespace(&self) -> StringIndex {
         self.namespace
     }
-    pub(crate) fn derived_from(&self)->TypeDefOrRef{
+    pub(crate) fn derived_from(&self) -> TypeDefOrRef {
         self.derived_from
     }
-    pub(crate) fn field_index(&self)->FieldIndex{
+    pub(crate) fn field_index(&self) -> FieldIndex {
         self.field_index
     }
     pub(crate) fn from_vecs(

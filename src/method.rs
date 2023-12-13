@@ -1,7 +1,9 @@
 use crate::{
-    assembly::{table_rows, u16_from_slice_at, u32_from_slice_at, StringIndex, BlobIndex},
+    assembly::{table_rows, u16_from_slice_at, u32_from_slice_at, BlobIndex, StringIndex},
     bitvec::BitVec64,
-    param::ParamIndex, type_def::TypeDefOrRef, pe_file::{PEFile, RVA},
+    param::ParamIndex,
+    pe_file::{PEFile, RVA},
+    type_def::TypeDefOrRef,
 };
 #[derive(Copy, Clone, Debug)]
 pub struct MethodIndex(pub u32);
@@ -21,23 +23,26 @@ impl MethodIndex {
         MethodIndex(index)
     }
 }
-#[derive(Copy,Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct MethodDef {
     rva: u32,
     impl_flags: u16,
     flags: u16,
     name: StringIndex,
-    signature:BlobIndex,
+    signature: BlobIndex,
     param_index: ParamIndex,
 }
 impl MethodDef {
-    pub(crate) fn rva(&self)->RVA{
+    pub(crate) fn param_start(&self) -> ParamIndex {
+        self.param_index
+    }
+    pub(crate) fn rva(&self) -> RVA {
         RVA(self.rva as u64)
     }
-    pub(crate) fn name(&self)->StringIndex{
+    pub(crate) fn name(&self) -> StringIndex {
         self.name
     }
-    pub(crate) fn signature(&self)->BlobIndex{
+    pub(crate) fn signature(&self) -> BlobIndex {
         self.signature
     }
     pub(crate) fn from_vecs(
@@ -45,7 +50,7 @@ impl MethodDef {
         impl_flags: &[u16],
         flags: &[u16],
         names: &[StringIndex],
-        signatures:&[BlobIndex],
+        signatures: &[BlobIndex],
         param_indices: &[ParamIndex],
     ) -> Vec<Self> {
         let mut res = Vec::with_capacity(flags.len());
@@ -53,7 +58,7 @@ impl MethodDef {
             let flags = flags[index];
             let impl_flags = impl_flags[index];
             let name = names[index];
-            let rva= rvas[index];
+            let rva = rvas[index];
             let signature = signatures[index];
             let param_index = param_indices[index];
             res.push(Self {
@@ -69,66 +74,68 @@ impl MethodDef {
     }
 }
 #[derive(Debug)]
-pub(crate) struct Method{
-    ops:Box<[CILOp]>,
+pub(crate) struct Method {
+    ops: Box<[CILOp]>,
 }
-pub(crate) fn decode_method(file:&PEFile,rva:RVA)->Method{
-    let first_byte = file.slice_at_rva(rva, 1).expect("Can't find method header!")[0];
+pub(crate) fn decode_method(file: &PEFile, rva: RVA) -> Method {
+    let first_byte = file
+        .slice_at_rva(rva, 1)
+        .expect("Can't find method header!")[0];
     let tag = first_byte & 0b11;
-    match tag{
-        0x2=>{
-            let len = first_byte>>2;
+    match tag {
+        0x2 => {
+            let len = first_byte >> 2;
             let mut slice = &file.slice_at_rva(rva, len as u64 + 1).unwrap()[1..];
             let mut ops = Vec::new();
-            while slice.len() > 0{
+            while slice.len() > 0 {
                 ops.push(decode_op(&mut slice));
             }
-            Method{ops:ops.into()}
+            Method { ops: ops.into() }
         }
-        0x3=>todo!("Can't decode fat headers"),
-        _=>todo!("Unsuported method header")
+        0x3 => todo!("Can't decode fat headers"),
+        _ => todo!("Unsuported method header"),
     }
 }
-fn decode_op(slice:&mut &[u8])->CILOp{
+fn decode_op(slice: &mut &[u8]) -> CILOp {
     let byte = slice[0];
-    match byte{
-        0x2=>{
+    match byte {
+        0x2 => {
             *slice = &slice[1..];
             CILOp::LDArg0.into()
         }
-        0x3=>{
+        0x3 => {
             *slice = &slice[1..];
             CILOp::LDArg1.into()
         }
-        0x4=>{
+        0x4 => {
             *slice = &slice[1..];
             CILOp::LDArg2.into()
         }
-        0x5=>{
+        0x5 => {
             *slice = &slice[1..];
             CILOp::LDArg3.into()
         }
-        0x25=>{
+        0x25 => {
             *slice = &slice[1..];
             CILOp::Dup
         }
-        0x2a=>{
+        0x2a => {
             *slice = &slice[1..];
             CILOp::Ret
         }
-        0x58=>{
+        0x58 => {
             *slice = &slice[1..];
             CILOp::Add
         }
-        0x5a=>{
+        0x5a => {
             *slice = &slice[1..];
             CILOp::Mul
         }
-        _=>todo!("Unhandled op 0x{byte:x}!"),
+        _ => todo!("Unhandled op 0x{byte:x}!"),
     }
 }
 #[derive(Debug)]
-enum CILOp{
+enum CILOp {
     LDArg0,
     LDArg1,
     LDArg2,
