@@ -3,7 +3,7 @@ use crate::{
     bitvec::BitVec64,
     param::ParamIndex,
     pe_file::{PEFile, RVA},
-    type_def::TypeDefOrRef,
+    type_def::{TypeDefIndex, TypeDefOrRef, TypeRefIndex},
 };
 #[derive(Copy, Clone, Debug)]
 pub struct MethodIndex(pub u32);
@@ -45,32 +45,22 @@ impl MethodDef {
     pub(crate) fn signature(&self) -> BlobIndex {
         self.signature
     }
-    pub(crate) fn from_vecs(
-        rvas: &[u32],
-        impl_flags: &[u16],
-        flags: &[u16],
-        names: &[StringIndex],
-        signatures: &[BlobIndex],
-        param_indices: &[ParamIndex],
-    ) -> Vec<Self> {
-        let mut res = Vec::with_capacity(flags.len());
-        for index in 0..flags.len() {
-            let flags = flags[index];
-            let impl_flags = impl_flags[index];
-            let name = names[index];
-            let rva = rvas[index];
-            let signature = signatures[index];
-            let param_index = param_indices[index];
-            res.push(Self {
-                flags,
-                impl_flags,
-                rva,
-                name,
-                signature,
-                param_index,
-            })
+    pub(crate) fn new(
+        rva: u32,
+        impl_flags: u16,
+        flags: u16,
+        name: StringIndex,
+        signature: BlobIndex,
+        param_index: ParamIndex,
+    ) -> Self {
+        Self {
+            rva,
+            impl_flags,
+            flags,
+            name,
+            signature,
+            param_index,
         }
-        res
     }
 }
 #[derive(Debug)]
@@ -145,4 +135,50 @@ enum CILOp {
     Mul,
     Ret,
     Dup,
+}
+#[derive(Clone, Debug)]
+pub enum MemberRefParent {
+    TypeDef(TypeDefIndex),
+    TypeRef(TypeRefIndex),
+    MethodDef(MethodIndex),
+}
+impl MemberRefParent {
+    pub(crate) fn decode(table_slice: &mut &[u8], tables_rows: &[u32], tables: BitVec64) -> Self {
+        let typedef_num = table_rows(tables_rows, tables, 0x2).unwrap_or_default();
+        let max = typedef_num;
+        let encoded = if max > (1 << 14) {
+            let encoded = u32_from_slice_at(table_slice, 0);
+            *table_slice = &table_slice[4..];
+            encoded
+        } else {
+            let encoded = u16_from_slice_at(table_slice, 0);
+            *table_slice = &table_slice[2..];
+            encoded as u32
+        };
+        let tag = encoded & 0b11;
+        let index = tag & (!0b11);
+        match tag {
+            0x00 => MemberRefParent::TypeDef(TypeDefIndex(index)),
+            0x01 => MemberRefParent::TypeRef(TypeRefIndex(index)),
+            //0x02 => MemberRefParent::TypeSpec(TypeSpecIndex(index)),
+            0x3 => MemberRefParent::MethodDef(MethodIndex(index)),
+            _ => panic!("Invalid MemberRefParent tag:{tag}"),
+        }
+    }
+}
+#[derive(Clone, Debug)]
+pub struct MemberRef {
+    class: MemberRefParent,
+    name: StringIndex,
+    signature: BlobIndex,
+}
+
+impl MemberRef {
+    pub fn new(class: MemberRefParent, name: StringIndex, signature: BlobIndex) -> Self {
+        Self {
+            class,
+            name,
+            signature,
+        }
+    }
 }

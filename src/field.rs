@@ -1,5 +1,5 @@
 use crate::{
-    assembly::{table_rows, u16_from_slice_at, u32_from_slice_at},
+    assembly::{table_rows, u16_from_slice_at, u32_from_slice_at, BlobIndex, StringIndex},
     bitvec::BitVec64,
 };
 #[derive(Copy, Clone, Debug)]
@@ -18,5 +18,20 @@ impl FieldIndex {
             index as u32
         };
         FieldIndex(index)
+    }
+}
+#[derive(Clone, Debug)]
+pub struct Field {
+    flags: u32,
+    name: StringIndex,
+    signature: BlobIndex,
+}
+impl Field {
+    pub fn new(flags: u32, name: StringIndex, signature: BlobIndex) -> Self {
+        Self {
+            flags,
+            name,
+            signature,
+        }
     }
 }

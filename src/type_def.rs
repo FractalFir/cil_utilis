@@ -7,7 +7,7 @@ use crate::{
 #[derive(Copy, Clone, Debug)]
 pub struct TypeDefIndex(pub u32);
 #[derive(Copy, Clone, Debug)]
-pub struct TypeRefIndex(u32);
+pub struct TypeRefIndex(pub u32);
 #[derive(Copy, Clone, Debug)]
 pub struct TypeSpecIndex(u32);
 #[derive(Copy, Clone, Debug)]
@@ -77,7 +77,7 @@ impl TypeDefOrRef {
     pub(crate) fn decode(table_slice: &mut &[u8], tables_rows: &[u32], tables: BitVec64) -> Self {
         let typedef_num = table_rows(tables_rows, tables, 0x2).unwrap_or_default();
         let max = typedef_num;
-        let encoded = if max > 1 << 14 {
+        let encoded = if max > (1 << 14) {
             let encoded = u32_from_slice_at(table_slice, 0);
             *table_slice = &table_slice[4..];
             encoded

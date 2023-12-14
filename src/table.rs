@@ -1,11 +1,12 @@
 use std::ops::Range;
 
 use crate::{
-    assembly::{decode_blob_compressed_value, EncodedAssembly, Table},
+    assembly::{decode_blob_compressed_value, EncodedAssembly, StringIndex, Table},
     field::FieldIndex,
     method::{Method, MethodIndex},
     param::ParamIndex,
     r#type::{decode_type, Type},
+    resolution_scope::ResolutionScope,
     type_def::{TypeDef, TypeDefIndex, TypeDefOrRef},
 };
 pub(crate) enum DecodedTable {
@@ -44,6 +45,9 @@ impl DecodedTable {
                         .get(index + 1)
                         .map(|td| td.field_index())
                         .unwrap_or_else(|| FieldIndex(asm.field_len() as u32));
+                    println!(
+                        "type_name:{name},namespace:{namespace},fields_start:{fields_start:?}"
+                    );
                     res.push(DecodedTypeDef {
                         flags,
                         name,
@@ -60,6 +64,7 @@ impl DecodedTable {
                 for index in 0..methods.len() {
                     let method = methods[index];
                     let name: Box<str> = asm.str_at(method.name()).to_owned().into();
+                    println!("method_name:{name}. index:{:?}", method.name());
                     let signature = method.signature();
                     let param_start = method.param_start();
                     let param_end = methods
@@ -67,8 +72,9 @@ impl DecodedTable {
                         .map(|method| method.param_start())
                         .unwrap_or_else(|| ParamIndex(asm.params_len() as u32));
                     let method = crate::method::decode_method(asm.pe_file(), method.rva());
-                    let signature = Signature::decode(asm.blob_at(signature),asm);
-                    println!("{name}:{signature:?}");
+                    //let signature = Signature::empty();
+                    let signature = Signature::decode(asm.blob_at(signature), asm);
+
                     new_methods.push((name, method, signature, param_start..param_end));
                 }
                 Self::MethodDef(new_methods.into())
@@ -91,20 +97,27 @@ impl DecodedTable {
 //ECMA spec II.23.1.16
 #[derive(Debug)]
 struct Signature {
-    flags:u8,
+    flags: u8,
     args: Box<[Type]>,
     ret: Type,
 }
 impl Signature {
-    pub fn decode(mut signature: &[u8],asm:&EncodedAssembly) -> Self {
+    pub fn empty() -> Self {
+        Self {
+            flags: 0,
+            args: [].into(),
+            ret: Type::Void,
+        }
+    }
+    pub fn decode(mut signature: &[u8], asm: &EncodedAssembly) -> Self {
         let flags = signature[0];
         signature = &signature[1..];
         let argc: u32 = decode_blob_compressed_value(&mut signature);
         let mut args = Vec::with_capacity(argc as usize);
         for _ in 0..argc {
-            args.push(decode_type(&mut signature,asm).unwrap());
+            args.push(decode_type(&mut signature, asm).unwrap());
         }
-        let ret = decode_type(&mut signature,asm).unwrap();
+        let ret = decode_type(&mut signature, asm).unwrap();
         //println!("signature:{signature:?} flags:{flags:b} argc:{argc}");
         Self {
             args: args.into(),
@@ -132,6 +145,21 @@ impl DotnetTypeRef {
                 todo!("Can't get name of type {def_idx:?}");
             }
             _ => todo!("Can't get name of type {tdor:?}"),
+        }
+    }
+}
+#[derive(Debug, Clone)]
+pub struct TypeRef {
+    scope: ResolutionScope,
+    name: StringIndex,
+    namespace: StringIndex,
+}
+impl TypeRef {
+    pub fn new(scope: ResolutionScope, name: StringIndex, namespace: StringIndex) -> Self {
+        Self {
+            scope,
+            name,
+            namespace,
         }
     }
 }

@@ -27,19 +27,12 @@ pub struct Param {
     name: StringIndex,
 }
 impl Param {
-    pub fn new(flags: &[u16], sequences: &[u16], names: &[StringIndex]) -> Vec<Self> {
-        let mut res = Vec::with_capacity(flags.len());
-        for index in 0..flags.len() {
-            let flags = flags[index];
-            let sequence = sequences[index];
-            let name = names[index];
-            res.push(Self {
-                flags,
-                sequence,
-                name,
-            });
+    pub fn new(flags: u16, sequence: u16, name: StringIndex) -> Self {
+        Self {
+            flags,
+            sequence,
+            name,
         }
-        res
     }
 
     pub fn flags(&self) -> u16 {

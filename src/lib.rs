@@ -10,9 +10,11 @@ pub(crate) mod field;
 pub(crate) mod method;
 pub(crate) mod param;
 pub(crate) mod pe_file;
+pub(crate) mod resolution_scope;
 pub(crate) mod table;
 pub(crate) mod r#type;
 pub(crate) mod type_def;
+
 fn build_ilasm(path: impl AsRef<Path>, is_dll: bool) -> PathBuf {
     let path = path.as_ref();
     let asm_type = if is_dll { "-dll" } else { "-exe" };
@@ -55,16 +57,16 @@ fn deser_add_i32() {
         .collect();
 }
 #[test]
-fn deser_add_i8() {
-    build_ilasm("test/add_i8.il", true);
-    let mut file = File::open("test/add_i8.dll").unwrap();
+fn deser_binop() {
+    build_ilasm("test/binop.il", true);
+    let mut file = File::open("test/binop.dll").unwrap();
     let asm = EncodedAssembly::from_file(&mut file).unwrap();
     let tables: Vec<_> = asm
         .table_stream()
         .iter()
         .map(|table| DecodedTable::decode(table, &asm))
         .collect();
-    //panic!();
+    panic!();
 }
 trait ReadHelper {
     fn read_u8(self) -> std::io::Result<u8>;

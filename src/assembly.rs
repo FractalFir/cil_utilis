@@ -2,12 +2,16 @@ use std::io::{Read, Seek};
 
 use crate::{
     bitvec::BitVec64,
-    field::FieldIndex,
-    method::{MethodDef, MethodIndex},
+    field::{Field, FieldIndex},
+    method::{MemberRef, MemberRefParent, MethodDef, MethodIndex},
     param::{Param, ParamIndex},
     pe_file::{PEFile, PEFileReadError, RVA},
+    resolution_scope::ResolutionScope,
+    table::TypeRef,
     type_def::{TypeDef, TypeDefOrRef},
 };
+#[derive(Copy, Clone, Debug)]
+pub(crate) struct AssemblyRefIndex(pub u32);
 #[derive(Clone, Copy)]
 struct HeapSizes {
     bitvec: BitVec64,
@@ -65,7 +69,7 @@ impl HeapSizes {
 }
 #[derive(Debug)]
 enum MetadataStream {
-    LogicalMetadataTable(Box<[u32]>,BitVec64,Box<[Table]>),
+    LogicalMetadataTable(Box<[u32]>, BitVec64, Box<[Table]>),
     Strings(Box<[u8]>),
     US(Box<[u8]>),
     Blob(Box<[u8]>),
@@ -79,10 +83,41 @@ pub(crate) struct GUIDIndex(pub u32);
 pub(crate) struct BlobIndex(pub u32);
 #[derive(Clone, Debug)]
 pub(crate) enum Table {
-    Module { name: StringIndex, mvid: GUIDIndex },
+    Module {
+        name: StringIndex,
+        mvid: GUIDIndex,
+    },
+    TypeRefTable(Box<[TypeRef]>),
     TypeDefTable(Box<[TypeDef]>),
+    Fields(Box<[Field]>),
     MethodDefTable(Box<[MethodDef]>),
     Param(Vec<Param>),
+    MemberRef(Box<[MemberRef]>),
+    StandAloneSig(Box<[BlobIndex]>),
+    Assembly {
+        hash_alg_id: u32,
+        major: u16,
+        minor: u16,
+        build_number: u16,
+        revision_number: u16,
+        flags: u32,
+        public_key: BlobIndex,
+        name: StringIndex,
+        culture: StringIndex,
+    },
+    AssemblyRefs(Box<[AssemblyRef]>),
+}
+#[derive(Clone, Debug)]
+pub(crate) struct AssemblyRef {
+    hash_alg_id: u32,
+    major: u16,
+    minor: u16,
+    build_number: u16,
+    revision_number: u16,
+    flags: u32,
+    public_key: BlobIndex,
+    name: StringIndex,
+    culture: StringIndex,
 }
 pub(crate) fn table_rows(tables_rows: &[u32], tables: BitVec64, table: u8) -> Option<u32> {
     match tables.into_iter().position(|v| v == table) {
@@ -117,6 +152,19 @@ impl Table {
                 assert_eq!(enc_base_id, GUIDIndex(0));
                 Self::Module { name, mvid }
             }
+            0x1 => {
+                let mut type_refs = Vec::with_capacity(rows as usize);
+                for _ in 0..rows {
+                    let scope = ResolutionScope::decode(table_slice, tables_rows, tables);
+                    let name = sizes.read_string_index(table_slice);
+                    *table_slice = &table_slice[sizes.string_index_size()..];
+                    let namespace = sizes.read_string_index(table_slice);
+                    *table_slice = &table_slice[sizes.string_index_size()..];
+                    println!("scope:{scope:?} name:{name:?} namespace:{namespace:?}");
+                    type_refs.push(TypeRef::new(scope, name, namespace));
+                }
+                Table::TypeRefTable(type_refs.into())
+            }
             0x2 => {
                 let mut flags = Vec::with_capacity(rows as usize);
                 let mut type_names = Vec::with_capacity(rows as usize);
@@ -127,24 +175,19 @@ impl Table {
                 for _ in 0..rows {
                     flags.push(u32_from_slice_at(table_slice, 0));
                     *table_slice = &table_slice[4..];
-                }
-                for _ in 0..rows {
                     type_names.push(sizes.read_string_index(table_slice));
                     *table_slice = &table_slice[sizes.string_index_size()..];
-                }
-                for _ in 0..rows {
                     type_namespaces.push(sizes.read_string_index(table_slice));
                     *table_slice = &table_slice[sizes.string_index_size()..];
-                }
-                for _ in 0..rows {
                     derived_from.push(TypeDefOrRef::decode(table_slice, tables_rows, tables));
-                }
-                for _ in 0..rows {
                     field_idx.push(FieldIndex::decode(table_slice, tables_rows, tables));
+                    let idx = u32_from_slice_at(table_slice, 0);
+                    println!("method_idx:0x{idx:x}");
+                    let idx = MethodIndex::decode(table_slice, tables_rows, tables);
+
+                    method_idx.push(idx);
                 }
-                for _ in 0..rows {
-                    method_idx.push(MethodIndex::decode(table_slice, tables_rows, tables));
-                }
+
                 let type_defs = TypeDef::from_vecs(
                     &flags,
                     &type_names,
@@ -154,67 +197,155 @@ impl Table {
                     &method_idx,
                 );
                 println!("type_defs:{type_defs:?}");
+                let rva = u32_from_slice_at(table_slice, 0);
+                println!("after typedef:0x{rva:x}");
                 Self::TypeDefTable(type_defs.into())
             }
+            0x4 => {
+                let mut fields = Vec::with_capacity(rows as usize);
+                for _ in 0..rows {
+                    let flags = u32_from_slice_at(table_slice, 0);
+                    *table_slice = &table_slice[4..];
+                    let name = sizes.read_string_index(table_slice);
+                    *table_slice = &table_slice[sizes.string_index_size()..];
+                    let signature = sizes.read_blob_index(table_slice);
+                    *table_slice = &table_slice[sizes.blob_index_size()..];
+                    fields.push(Field::new(flags, name, signature));
+                }
+                Table::Fields(fields.into())
+            }
             0x6 => {
-                let mut rvas = Vec::with_capacity(rows as usize);
-                let mut impl_flags = Vec::with_capacity(rows as usize);
-                let mut flags = Vec::with_capacity(rows as usize);
-                let mut names = Vec::with_capacity(rows as usize);
-                let mut signatures = Vec::with_capacity(rows as usize);
-                let mut param_indices = Vec::with_capacity(rows as usize);
+                let mut method_defs = Vec::with_capacity(rows as usize);
                 for _ in 0..rows {
                     let rva = u32_from_slice_at(table_slice, 0);
-                    rvas.push(rva);
                     *table_slice = &table_slice[4..];
-                }
-                for _ in 0..rows {
-                    impl_flags.push(u16_from_slice_at(table_slice, 0));
+                    let impl_flags = u16_from_slice_at(table_slice, 0);
                     *table_slice = &table_slice[2..];
-                }
-                for _ in 0..rows {
-                    flags.push(u16_from_slice_at(table_slice, 0));
+                    let flags = u16_from_slice_at(table_slice, 0);
                     *table_slice = &table_slice[2..];
-                }
-                for _ in 0..rows {
-                    names.push(sizes.read_string_index(table_slice));
+                    let name = sizes.read_string_index(table_slice);
                     *table_slice = &table_slice[sizes.string_index_size()..];
-                }
-                for _ in 0..rows {
-                    signatures.push(sizes.read_blob_index(table_slice));
-                    println!("sig:{:?}", signatures.last().unwrap());
+                    let signature = sizes.read_blob_index(table_slice);
                     *table_slice = &table_slice[sizes.blob_index_size()..];
+                    let param_index = ParamIndex::decode(table_slice, tables_rows, tables);
+                    method_defs.push(MethodDef::new(
+                        rva,
+                        impl_flags,
+                        flags,
+                        name,
+                        signature,
+                        param_index,
+                    ));
                 }
-                for _ in 0..rows {
-                    param_indices.push(ParamIndex::decode(table_slice, tables_rows, tables));
-                }
-                let method_defs = MethodDef::from_vecs(
-                    &rvas,
-                    &impl_flags,
-                    &flags,
-                    &names,
-                    &signatures,
-                    &param_indices,
-                );
                 Self::MethodDefTable(method_defs.into())
             }
             0x8 => {
-                let mut flags = Vec::with_capacity(rows as usize);
+                let mut params = Vec::with_capacity(rows as usize);
                 for _ in 0..rows {
-                    flags.push(u16_from_slice_at(table_slice, 0));
+                    let flags = u16_from_slice_at(table_slice, 0);
                     *table_slice = &table_slice[2..];
-                }
-                let mut sequences = Vec::with_capacity(rows as usize);
-                for _ in 0..rows {
-                    sequences.push(u16_from_slice_at(table_slice, 0));
+                    let sequence = u16_from_slice_at(table_slice, 0);
                     *table_slice = &table_slice[2..];
-                }
-                let mut names = Vec::with_capacity(rows as usize);
-                for _ in 0..rows {
-                    names.push(sizes.read_string_index(table_slice));
+                    let name = sizes.read_string_index(table_slice);
                     *table_slice = &table_slice[sizes.string_index_size()..];
+                    params.push(Param::new(flags, sequence, name))
                 }
-                Self::Param(Param::new(&flags, &sequences, &names))
+                Self::Param(params)
+            }
+            0xa => {
+                let mut member_refs = Vec::with_capacity(rows as usize);
+                for _ in 0..rows {
+                    let class = MemberRefParent::decode(table_slice, tables_rows, tables);
+                    let name = sizes.read_string_index(table_slice);
+                    *table_slice = &table_slice[sizes.string_index_size()..];
+                    let signature = sizes.read_blob_index(table_slice);
+                    *table_slice = &table_slice[sizes.blob_index_size()..];
+
+                    member_refs.push(MemberRef::new(class, name, signature))
+                }
+                Self::MemberRef(member_refs.into())
+            }
+            0x11 => {
+                let mut sigs = Vec::with_capacity(rows as usize);
+                for _ in 0..rows {
+                    let signature = sizes.read_blob_index(table_slice);
+                    *table_slice = &table_slice[sizes.blob_index_size()..];
+
+                    sigs.push(signature);
+                }
+                Self::StandAloneSig(sigs.into())
+            }
+            0x20 => {
+                let hash_alg_id = u32_from_slice_at(table_slice, 0);
+                *table_slice = &table_slice[4..];
+                let major = u16_from_slice_at(table_slice, 0);
+                *table_slice = &table_slice[2..];
+                let minor = u16_from_slice_at(table_slice, 0);
+                *table_slice = &table_slice[2..];
+                let build_number = u16_from_slice_at(table_slice, 0);
+                *table_slice = &table_slice[2..];
+                let revision_number = u16_from_slice_at(table_slice, 0);
+                *table_slice = &table_slice[2..];
+                let flags = u32_from_slice_at(table_slice, 0);
+                *table_slice = &table_slice[4..];
+                let public_key = sizes.read_blob_index(table_slice);
+                *table_slice = &table_slice[sizes.blob_index_size()..];
+                let name = sizes.read_string_index(table_slice);
+                    println!("asm_ref_name:{name:?}");
+                    *table_slice = &table_slice[sizes.string_index_size()..];
+                    let culture = sizes.read_string_index(table_slice);
+                    *table_slice = &table_slice[sizes.string_index_size()..];
+                    println!("asm_ref_culture:{culture:?}");
+                Self::Assembly {
+                    hash_alg_id,
+                    major,
+                    minor,
+                    build_number,
+                    revision_number,
+                    flags,
+                    public_key,
+                    name,
+                    culture
+                }
+            }
+            
+            0x23 => {
+                let mut refs = Vec::with_capacity(rows as usize);
+                for _ in 0..rows{
+                    let hash_alg_id = u32_from_slice_at(table_slice, 0);
+                    *table_slice = &table_slice[4..];
+                    let major = u16_from_slice_at(table_slice, 0);
+                    *table_slice = &table_slice[2..];
+                    let minor = u16_from_slice_at(table_slice, 0);
+                    *table_slice = &table_slice[2..];
+                    let build_number = u16_from_slice_at(table_slice, 0);
+                    *table_slice = &table_slice[2..];
+                    let revision_number = u16_from_slice_at(table_slice, 0);
+                    *table_slice = &table_slice[2..];
+                    let flags = u32_from_slice_at(table_slice, 0);
+                    *table_slice = &table_slice[4..];
+                    let public_key = sizes.read_blob_index(table_slice);
+                    *table_slice = &table_slice[sizes.blob_index_size()..];
+                    let name = sizes.read_string_index(table_slice);
+                    assert_ne!(name.0,0);
+                    println!("asm_ref_name:{name:?}");
+                    *table_slice = &table_slice[sizes.string_index_size()..];
+                    let culture = sizes.read_string_index(table_slice);
+                    *table_slice = &table_slice[sizes.string_index_size()..];
+                    println!("asm_ref_culture:{culture:?}");
+                    refs.push(AssemblyRef {
+                        hash_alg_id,
+                        major,
+                        minor,
+                        build_number,
+                        revision_number,
+                        flags,
+                        public_key,
+                        name,
+                        culture
+                    });
+                }
+                Self::AssemblyRefs(refs.into())
             }
             _ => todo!("Unknown table 0x{table:x}",),
         }
@@ -262,7 +393,7 @@ impl MetadataStream {
                 tables,
             ));
         }
-        Self::LogicalMetadataTable(rows.into(),tables,encoded_tables.into())
+        Self::LogicalMetadataTable(rows.into(), tables, encoded_tables.into())
     }
     fn string_stream(stream: &[u8]) -> Self {
         Self::Strings(stream.to_owned().into())
@@ -322,7 +453,6 @@ struct RawMetadata {
     streams: Vec<MetadataStream>,
 }
 impl RawMetadata {
-    
     fn from_slice(metadata: &[u8]) -> Self {
         let magic = u32_from_slice_at(metadata, 0);
         assert_eq!(magic, 0x424A5342);
@@ -381,7 +511,6 @@ pub fn u16_from_slice_at(slice: &[u8], offset: usize) -> u16 {
     u16::from_le_bytes(value)
 }
 impl CILHeader {
-
     fn read_from_pe(pe_file: &PEFile) -> Self {
         let cli_header_rva: RVA = pe_file.pe_header().nt_header().cil_header();
         let cil_header_size = pe_file.pe_header().nt_header().cil_header_size();
@@ -516,16 +645,16 @@ impl EncodedAssembly {
     pub fn table_stream(&self) -> &[Table] {
         for stream in &self.header.raw_metadata.streams {
             match stream {
-                MetadataStream::LogicalMetadataTable(_,_,tables) => return &tables,
+                MetadataStream::LogicalMetadataTable(_, _, tables) => return &tables,
                 _ => (),
             }
         }
         panic!("No LogicalMetadataTable stream!")
     }
-    pub fn tables_rows(&self) -> (&[u32],BitVec64) {
+    pub fn tables_rows(&self) -> (&[u32], BitVec64) {
         for stream in &self.header.raw_metadata.streams {
             match stream {
-                MetadataStream::LogicalMetadataTable(rows,tables,_) => return (&rows,*tables),
+                MetadataStream::LogicalMetadataTable(rows, tables, _) => return (&rows, *tables),
                 _ => (),
             }
         }
