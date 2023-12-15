@@ -57,6 +57,17 @@ fn deser_add_i32() {
         .collect();
 }
 #[test]
+fn deser_class_i32() {
+    build_ilasm("test/class.il", true);
+    let mut file = File::open("test/class.dll").unwrap();
+    let asm = EncodedAssembly::from_file(&mut file).unwrap();
+    let tables: Vec<_> = asm
+        .table_stream()
+        .iter()
+        .map(|table| DecodedTable::decode(table, &asm))
+        .collect();
+}
+#[test]
 fn deser_binop() {
     build_ilasm("test/binop.il", true);
     let mut file = File::open("test/binop.dll").unwrap();

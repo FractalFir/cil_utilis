@@ -119,6 +119,12 @@ pub(crate) struct AssemblyRef {
     name: StringIndex,
     culture: StringIndex,
 }
+
+impl AssemblyRef {
+    pub(crate) fn name(&self) -> StringIndex {
+        self.name
+    }
+}
 pub(crate) fn table_rows(tables_rows: &[u32], tables: BitVec64, table: u8) -> Option<u32> {
     match tables.into_iter().position(|v| v == table) {
         Some(type_def_row) => Some(tables_rows[type_def_row as usize]),
@@ -157,6 +163,7 @@ impl Table {
                 for _ in 0..rows {
                     let scope = ResolutionScope::decode(table_slice, tables_rows, tables);
                     let name = sizes.read_string_index(table_slice);
+                    assert_ne!(name.0,0);
                     *table_slice = &table_slice[sizes.string_index_size()..];
                     let namespace = sizes.read_string_index(table_slice);
                     *table_slice = &table_slice[sizes.string_index_size()..];
@@ -181,8 +188,8 @@ impl Table {
                     *table_slice = &table_slice[sizes.string_index_size()..];
                     derived_from.push(TypeDefOrRef::decode(table_slice, tables_rows, tables));
                     field_idx.push(FieldIndex::decode(table_slice, tables_rows, tables));
-                    let idx = u32_from_slice_at(table_slice, 0);
-                    println!("method_idx:0x{idx:x}");
+                    //let idx = u32_from_slice_at(table_slice, 0);
+                    
                     let idx = MethodIndex::decode(table_slice, tables_rows, tables);
 
                     method_idx.push(idx);
@@ -204,10 +211,11 @@ impl Table {
             0x4 => {
                 let mut fields = Vec::with_capacity(rows as usize);
                 for _ in 0..rows {
-                    let flags = u32_from_slice_at(table_slice, 0);
-                    *table_slice = &table_slice[4..];
+                    let flags = u16_from_slice_at(table_slice, 0);
+                    *table_slice = &table_slice[2..];
                     let name = sizes.read_string_index(table_slice);
                     *table_slice = &table_slice[sizes.string_index_size()..];
+                    println!("Field name:{name:?}");
                     let signature = sizes.read_blob_index(table_slice);
                     *table_slice = &table_slice[sizes.blob_index_size()..];
                     fields.push(Field::new(flags, name, signature));
@@ -284,6 +292,7 @@ impl Table {
                 *table_slice = &table_slice[2..];
                 let build_number = u16_from_slice_at(table_slice, 0);
                 *table_slice = &table_slice[2..];
+
                 let revision_number = u16_from_slice_at(table_slice, 0);
                 *table_slice = &table_slice[2..];
                 let flags = u32_from_slice_at(table_slice, 0);
@@ -291,11 +300,12 @@ impl Table {
                 let public_key = sizes.read_blob_index(table_slice);
                 *table_slice = &table_slice[sizes.blob_index_size()..];
                 let name = sizes.read_string_index(table_slice);
-                    println!("asm_ref_name:{name:?}");
+                    println!("asm_name:{name:?} minor:{minor:x} major:{major:x} build_number:{build_number:x} revision_number:{revision_number:x}");
+                *table_slice = &table_slice[sizes.string_index_size()..];
+                assert_ne!(name.0,0);
+                let culture = sizes.read_string_index(table_slice);
                     *table_slice = &table_slice[sizes.string_index_size()..];
-                    let culture = sizes.read_string_index(table_slice);
-                    *table_slice = &table_slice[sizes.string_index_size()..];
-                    println!("asm_ref_culture:{culture:?}");
+                    println!("asm_culture:{culture:?}");
                 Self::Assembly {
                     hash_alg_id,
                     major,
@@ -313,12 +323,14 @@ impl Table {
                 let mut refs = Vec::with_capacity(rows as usize);
                 for _ in 0..rows{
                     let hash_alg_id = u32_from_slice_at(table_slice, 0);
+                    println!("hash_alg_id:{hash_alg_id:x}");
                     *table_slice = &table_slice[4..];
                     let major = u16_from_slice_at(table_slice, 0);
                     *table_slice = &table_slice[2..];
                     let minor = u16_from_slice_at(table_slice, 0);
                     *table_slice = &table_slice[2..];
                     let build_number = u16_from_slice_at(table_slice, 0);
+                    println!("build_number:{build_number}");
                     *table_slice = &table_slice[2..];
                     let revision_number = u16_from_slice_at(table_slice, 0);
                     *table_slice = &table_slice[2..];
@@ -327,12 +339,12 @@ impl Table {
                     let public_key = sizes.read_blob_index(table_slice);
                     *table_slice = &table_slice[sizes.blob_index_size()..];
                     let name = sizes.read_string_index(table_slice);
-                    assert_ne!(name.0,0);
+                    //assert_ne!(name.0,0);
                     println!("asm_ref_name:{name:?}");
-                    *table_slice = &table_slice[sizes.string_index_size()..];
-                    let culture = sizes.read_string_index(table_slice);
-                    *table_slice = &table_slice[sizes.string_index_size()..];
-                    println!("asm_ref_culture:{culture:?}");
+                    //*table_slice = &table_slice[sizes.string_index_size()..];
+                    //let culture = sizes.read_string_index(table_slice);
+                    //*table_slice = &table_slice[sizes.string_index_size()..];
+                    //println!("asm_ref_culture:{culture:?}");
                     refs.push(AssemblyRef {
                         hash_alg_id,
                         major,
@@ -342,9 +354,10 @@ impl Table {
                         flags,
                         public_key,
                         name,
-                        culture
+                        culture:StringIndex(0),
                     });
                 }
+                let refs = [];
                 Self::AssemblyRefs(refs.into())
             }
             _ => todo!("Unknown table 0x{table:x}",),
@@ -667,7 +680,7 @@ impl EncodedAssembly {
                 _ => (),
             }
         }
-        panic!("No methods table!")
+        &[]
     }
     pub fn field_len(&self) -> usize {
         for table in self.table_stream() {

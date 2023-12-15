@@ -14,6 +14,11 @@ pub(crate) enum DecodedTable {
     TypeDefTable(Box<[DecodedTypeDef]>),
     MethodDef(Box<[(Box<str>, Method, Signature, Range<ParamIndex>)]>),
     Params(Box<[(u16, u16, Box<str>)]>),
+    TypeRefTable(Box<[DecodedTypeRef]>),
+    AssemblyTable{
+        name:Box<str>
+    },
+    AssemblyRefs(Box<[AssemblyDescr]>)
 }
 impl DecodedTable {
     pub(crate) fn decode(table: &Table, asm: &EncodedAssembly) -> Self {
@@ -26,6 +31,18 @@ impl DecodedTable {
                     asm.guid_stream()[(mvid.0 - 1) as usize]
                 };
                 Self::Module { name, mvid }
+            }
+            Table::TypeRefTable(refs)=>{
+                let mut decoded_refs = Vec::with_capacity(refs.len());
+                for tref in refs.iter(){
+                    let name: Box<str> = asm.str_at(tref.name()).to_owned().into();
+                    let namespace: Box<str> = asm.str_at(tref.namespace()).to_owned().into();
+                    println!("name:{name:?},namespace:{namespace}");
+            
+                    decoded_refs.push(DecodedTypeRef::new(tref.scope(),name,namespace));
+            } 
+                Self::TypeRefTable(decoded_refs.into())
+                //todo!("{decoded_refs:?}");
             }
             Table::TypeDefTable(type_defs) => {
                 let mut res = Vec::with_capacity(type_defs.len());
@@ -86,13 +103,36 @@ impl DecodedTable {
                         let flags = param.flags();
                         let sequence = param.sequence();
                         let name: Box<str> = asm.str_at(param.name()).to_owned().into();
+                        let param_name =  asm.str_at(param.name());
+                        //println!("field_name:{name}");
                         (flags, sequence, name)
                     })
                     .collect(),
             ),
+            Table::Fields(fields)=>{
+                for field in fields.iter(){
+                    let name =  asm.str_at(field.name());
+                    println!("field_name:{name}");
+                }
+                todo!();
+            }
+            Table::Assembly { hash_alg_id, major, minor, build_number, revision_number, flags, public_key, name, culture }=>{
+                let name: Box<str> = asm.str_at(*name).to_owned().into();
+                Self::AssemblyTable{name}
+            }
+            Table::AssemblyRefs(refs)=>{
+                for aref in refs.iter(){
+                    let name: Box<str> = asm.str_at(aref.name()).to_owned().into();
+                    println!("assembly_ref_name:{name}");
+                }
+                todo!()
+            }
             _ => todo!("Table {table:?} is unsuported!"),
         }
     }
+}
+struct AssemblyDescr{
+
 }
 //ECMA spec II.23.1.16
 #[derive(Debug)]
@@ -142,7 +182,12 @@ impl DotnetTypeRef {
                 if def_idx.0 == 0 {
                     return None;
                 }
+                //asm.type_refs()
                 todo!("Can't get name of type {def_idx:?}");
+            }
+            TypeDefOrRef::TypeRef(index)=>{
+                let index = (index.0) as usize;
+                Some(DotnetTypeRef{})
             }
             _ => todo!("Can't get name of type {tdor:?}"),
         }
@@ -154,6 +199,16 @@ pub struct TypeRef {
     name: StringIndex,
     namespace: StringIndex,
 }
+#[derive(Debug, Clone)]
+pub struct DecodedTypeRef {
+    scope: ResolutionScope,
+    name: Box<str>,
+    namespace: Box<str>,
+}
+
+impl DecodedTypeRef {
+    pub fn new(scope: ResolutionScope, name: Box<str>, namespace: Box<str>) -> Self { Self { scope, name, namespace } }
+}
 impl TypeRef {
     pub fn new(scope: ResolutionScope, name: StringIndex, namespace: StringIndex) -> Self {
         Self {
@@ -161,5 +216,17 @@ impl TypeRef {
             name,
             namespace,
         }
+    }
+
+    pub fn name(&self) -> StringIndex {
+        self.name
+    }
+
+    pub fn namespace(&self) -> StringIndex {
+        self.namespace
+    }
+
+    pub fn scope(&self) -> ResolutionScope {
+        self.scope
     }
 }

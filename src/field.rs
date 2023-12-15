@@ -22,16 +22,24 @@ impl FieldIndex {
 }
 #[derive(Clone, Debug)]
 pub struct Field {
-    flags: u32,
+    flags: u16,
     name: StringIndex,
     signature: BlobIndex,
 }
 impl Field {
-    pub fn new(flags: u32, name: StringIndex, signature: BlobIndex) -> Self {
+    pub fn new(flags: u16, name: StringIndex, signature: BlobIndex) -> Self {
         Self {
             flags,
             name,
             signature,
         }
+    }
+
+    pub fn name(&self) -> StringIndex {
+        self.name
+    }
+
+    pub fn signature(&self) -> BlobIndex {
+        self.signature
     }
 }
